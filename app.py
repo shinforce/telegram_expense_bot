@@ -31,6 +31,11 @@ def add_expense_to_sheet(description: str, amount: float, user_name: str):
         logging.error(f"Error writing to Google Sheets: {e}")
         return False
 
+# --- TELEGRAM BOT HANDLERS ---
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """A simple command to check if the bot is alive."""
+    await update.message.reply_text("Hi! I'm alive and ready to log expenses.")
+
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Parses messages and calls the sheet function."""
     user = update.effective_user
@@ -103,5 +108,4 @@ if __name__ == "__main__":
     # Render will provide the PORT environment variable
     #import os
     port = int(os.environ.get('PORT', 5000))
-
     app.run(host='0.0.0.0', port=port)

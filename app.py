@@ -9,7 +9,7 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 from datetime import datetime
 
-GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GCP_CREDENTIALS_PATH", "credentials.json")
+GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GCP_CREDENTIALS_PATH", "family-expense-bot-471309-a2c7653d9602.json")
 GOOGLE_SHEET_NAME = "Расходы"
 GOOGLE_WORKSHEET_NAME = "expenses_log"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")

@@ -1,4 +1,5 @@
 import os
+import asyncio
 from flask import Flask
 import threading
 import gspread
@@ -84,6 +85,8 @@ def hello():
     
 def run_bot():
     """The function that contains your bot's starting logic."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler("start", start_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))

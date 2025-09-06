@@ -1,19 +1,20 @@
 import os
-import asyncio
-from flask import Flask
-import threading
 import gspread
 import logging
 import sys
+from datetime import datetime
+from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
-from datetime import datetime
+import asyncio
 
+# --- CONFIGURATION (READS FROM ENVIRONMENT) ---
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GCP_CREDENTIALS_PATH", "family-expense-bot-471309-a2c7653d9602.json")
 GOOGLE_SHEET_NAME = "Расходы"
 GOOGLE_WORKSHEET_NAME = "expenses_log"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
+# --- SETUP LOGGING ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -24,6 +25,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# --- GOOGLE SHEETS FUNCTION ---
 def add_expense_to_sheet(description: str, amount: float, user_name: str):
     """Adds a new row to the Google Sheet."""
     try:
@@ -76,6 +78,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Hmm, I didn't get that. Please use the format: `Description Amount` (e.g., `Coffee 500`) or `Amount Description` (e.g., `500 Coffee`)"
         )
 
+# --- FLASK APP ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -83,18 +86,23 @@ def hello():
     """A simple endpoint to check if the app is running."""
     return "Hello, the bot is alive!"
     
-def run_bot():
-    """The function that contains your bot's starting logic."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler("start", start_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    logger.info("Bot is starting polling...")
-    application.run_polling(stop_signals=[])
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """This endpoint receives updates from Telegram."""
+    # We convert the JSON data from the request into a Telegram Update object
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    
+    # Process the update using the library's built-in handling
+    # asyncio.run() is used to execute the async function in this sync context
+    asyncio.run(application.process_update(update))
+    
+    return 'ok'
 
 if __name__ == "__main__":
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.start()
+    # Add your handlers to the application
+    application.add_handler(CommandHandler("start", start_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+    # Run the Flask app
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

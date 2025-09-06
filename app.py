@@ -4,7 +4,7 @@ import threading
 import gspread
 import logging
 from telegram import Update
-from telegram.ext import Application, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 from datetime import datetime
 
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GCP_CREDENTIALS_PATH", "credentials.json")
@@ -103,4 +103,5 @@ if __name__ == "__main__":
     # Render will provide the PORT environment variable
     #import os
     port = int(os.environ.get('PORT', 5000))
+
     app.run(host='0.0.0.0', port=port)

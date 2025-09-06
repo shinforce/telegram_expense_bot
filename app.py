@@ -12,6 +12,16 @@ GOOGLE_SHEET_NAME = "Расходы"
 GOOGLE_WORKSHEET_NAME = "expenses_log"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True,
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
 gc = gspread.service_account(filename='family-expense-bot-471309-a2c7653d9602.json')
 
 def add_expense_to_sheet(description: str, amount: float, user_name: str):

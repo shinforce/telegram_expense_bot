@@ -23,23 +23,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-gc = gspread.service_account(filename='family-expense-bot-471309-a2c7653d9602.json')
-
 def add_expense_to_sheet(description: str, amount: float, user_name: str):
     """Adds a new row to the Google Sheet."""
     try:
         gc = gspread.service_account(filename=GOOGLE_SHEETS_CREDENTIALS)
         sh = gc.open(GOOGLE_SHEET_NAME).worksheet('expenses_log')  # Assumes you're using the first sheet
-        
-        # Get current date and time
         now = datetime.now().strftime("%Y-%m-%d") # %H:%M:%S")
-        
         row_to_add = [now, description, amount, user_name]
         sh.append_row(row_to_add)
-        logging.info(f"Added to sheet: {row_to_add}")
+        logger.info(f"Added to sheet: {row_to_add}")
         return True
     except Exception as e:
-        logging.error(f"Error writing to Google Sheets: {e}")
+        logger.error(f"Error writing to Google Sheets: {e}")
         return False
 
 # --- TELEGRAM BOT HANDLERS ---
@@ -52,9 +47,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text
     
-    logging.info(f"Received message from {user.first_name}: {text}")
+    logger.info(f"Received message from {user.first_name}: {text}")
     
-    # Simple parsing: splits the message into description and amount
     try:
         parts = text.strip().split()
         if parts[0].isnumeric():
@@ -76,8 +70,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Failed to log expense. Check the server logs.")
             
     except (ValueError, IndexError):
-        # This handles cases where the message isn't in the expected format
-        logging.warning(f"Could not parse message: {text}")
+        logger.warning(f"Could not parse message: {text}")
         await update.message.reply_text(
             "Hmm, I didn't get that. Please use the format: `Description Amount` (e.g., `Coffee 500`) or `Amount Description` (e.g., `500 Coffee`)"
         )
@@ -92,31 +85,13 @@ def hello():
 def run_bot():
     """The function that contains your bot's starting logic."""
     application = Application.builder().token(TELEGRAM_TOKEN).build()
-    
     application.add_handler(CommandHandler("start", start_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    
     logger.info("Bot is starting polling...")
     application.run_polling()
 
-def main():
-    """Starts the Telegram bot."""
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    
-    # This handler will respond to all text messages
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-    
-    logging.info("Bot is starting...")
-    application.run_polling()
-
 if __name__ == "__main__":
-    #main()
-    # Start the bot in a separate thread
     bot_thread = threading.Thread(target=run_bot)
     bot_thread.start()
-    
-    # Run the Flask app
-    # Render will provide the PORT environment variable
-    #import os
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

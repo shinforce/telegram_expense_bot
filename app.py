@@ -91,7 +91,7 @@ def run_bot():
     application.add_handler(CommandHandler("start", start_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
     logger.info("Bot is starting polling...")
-    application.run_polling()
+    application.run_polling(stop_signals=[])
 
 if __name__ == "__main__":
     bot_thread = threading.Thread(target=run_bot)

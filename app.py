@@ -203,7 +203,7 @@ async def lifespan(app: FastAPI):
 # --- SETUP WEB SERVER using FastAPI (Remains the same) ---
 app = FastAPI(lifespan=lifespan)
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def health_check():
     return {"status": "ok"}
 

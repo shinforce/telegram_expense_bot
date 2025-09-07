@@ -14,6 +14,9 @@ GOOGLE_SHEET_NAME = "Расходы"
 GOOGLE_WORKSHEET_NAME = "expenses_log"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 
+# --- SETUP APPLICATION ---
+application = Application.builder().token(TELEGRAM_TOKEN).build()
+
 # --- SETUP LOGGING ---
 logging.basicConfig(
     level=logging.INFO,

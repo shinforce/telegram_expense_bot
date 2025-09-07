@@ -15,6 +15,20 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 PORT = int(os.environ.get('PORT', 8443))
 
+CURRENCIES = {
+    #EURO
+    "EUR": "EUR", 
+    "EURO": "EUR", 
+    "ЕВРО": "EUR",
+
+    #RUB
+    "RUB": "RUB", 
+    "RUBL": "RUB", 
+    "РУБ": "RUB", 
+    "РУБЛ": "RUB", 
+    "РУБЛЕЙ": "RUB"
+}
+
 # --- SETUP LOGGING ---
 logging.basicConfig(
     level=logging.INFO,
@@ -27,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- GOOGLE SHEETS FUNCTION ---
-def add_expense_to_sheet(description: str, amount: float, user_name: str):
+def add_expense_to_sheet(description: str, amount: float, user_name: str, currency: str = "RSD"):
     """Adds a new row to the Google Sheet."""
     try:
         gc = gspread.service_account(filename=GOOGLE_SHEETS_CREDENTIALS)
@@ -56,15 +70,24 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = text.split('\n')
     
     for text in text:
-    
+        currency = "RSD"
         try:
             parts = text.strip().split()
             if parts[0].isnumeric():
                 amount = int(parts[0])
-                description = " ".join(parts[1:])
-            else: 
-                amount = int(parts[-1])
-                description = " ".join(parts[:-1])
+                if parts[1] in CURRENCIES.keys():
+                    currency = CURRENCIES[parts[1]]
+                    description = " ".join(parts[1:])
+                else:
+                    description = " ".join(parts[1:])
+            else:                
+                if parts[-1] in CURRENCIES.keys():
+                    amount = int(parts[-2])
+                    description = " ".join(parts[:-2])
+                    currency = CURRENCIES[parts[-1]]
+                else:
+                    amount = int(parts[-1])
+                    description = " ".join(parts[:-1])
             
             user_name = user.full_name
             
@@ -72,8 +95,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Please provide a description before the amount.")
                 return
 
-            if add_expense_to_sheet(description, amount, user_name):
-                await update.message.reply_text(f"✅ Logged: '{description}' for {amount} RSD (from {user.first_name}).")
+            if add_expense_to_sheet(description, amount, user_name, currency):
+                await update.message.reply_text(f"✅ Logged: '{description}' for {amount} {currency} (from {user.first_name}).")
             else:
                 await update.message.reply_text("❌ Failed to log expense. Check the server logs.")
                 

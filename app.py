@@ -114,11 +114,11 @@ def add_expense_to_sheet(description: str, amount: float, user_name: str):
         return False
 
 # --- TELEGRAM BOT HANDLERS ---
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_handler(update: Update, context: application.context_types.DEFAULT_TYPE):
     """A simple command to check if the bot is alive."""
     await update.message.reply_text("Hi! I'm alive and ready to log expenses.")
 
-async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def message_handler(update: Update, context: application.context_types.DEFAULT_TYPE):
     """Parses messages and calls the sheet function."""
     user = update.effective_user
     text = update.message.text
@@ -178,35 +178,31 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def lifespan(app: FastAPI):
     """Handles startup and shutdown events for the bot."""
     # On startup
-    # RESTORED: Initialize the application
     await application.initialize()
-    
     start_command_handler = CommandHandler("start", start_handler)
     expense_message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
     application.add_handler(start_command_handler)
     application.add_handler(expense_message_handler)
-    
     webhook_path = f"/{TELEGRAM_TOKEN}"
     full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
     await application.bot.set_webhook(url=full_webhook_url, allowed_updates=Update.ALL_TYPES)
-    logger.info("Application started and webhook is set.")
+    logger.info("Application started, webhook is set.")
     
     yield  # The application runs
     
     # On shutdown
-    logger.info("Application shutting down...")
-    # RESTORED: Shut down the application
-    await application.bot.delete_webhook()
     await application.shutdown()
-    logger.info("Webhook deleted and application shut down.")
+    await application.bot.delete_webhook()
+    logger.info("Webhook deleted, application shut down.")
 
-# --- SETUP WEB SERVER using FastAPI (Remains the same) ---
+# --- SETUP WEB SERVER using FastAPI ---
 app = FastAPI(lifespan=lifespan)
 
 @app.api_route("/", methods=["GET", "HEAD"])
 def health_check():
     return {"status": "ok"}
 
+# --- WEBHOOK ENDPOINT ---
 @app.post("/{token}")
 async def process_update(token: str, request: Request):
     if token != TELEGRAM_TOKEN:
@@ -216,4 +212,3 @@ async def process_update(token: str, request: Request):
     await application.process_update(update)
     
     return {"status": "ok"}
-

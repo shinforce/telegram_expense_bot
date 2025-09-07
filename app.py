@@ -13,9 +13,7 @@ GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GCP_CREDENTIALS_PATH", "family-expen
 GOOGLE_SHEET_NAME = "Расходы"
 GOOGLE_WORKSHEET_NAME = "expenses_log"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-
-# --- SETUP APPLICATION ---
-application = Application.builder().token(TELEGRAM_TOKEN).build()
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 
 # --- SETUP LOGGING ---
 logging.basicConfig(
@@ -81,6 +79,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Hmm, I didn't get that. Please use the format: `Description Amount` (e.g., `Coffee 500`) or `Amount Description` (e.g., `500 Coffee`)"
         )
 
+# --- FUNCTION TO SET WEBHOOK ON STARTUP ---
+async def set_webhook(application: Application):
+    """Sets the webhook URL on bot startup."""
+    await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+    logger.info("Webhook successfully set!")
+
+# --- SETUP APPLICATION ---
+application = Application.builder().token(TELEGRAM_TOKEN).post_init(set_webhook).build()
+
+# Add your handlers
+application.add_handler(CommandHandler("start", start_handler))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+# Run the initialization before starting the web server
+asyncio.run(application.initialize())
+
 # --- FLASK APP ---
 app = Flask(__name__)
 
@@ -99,13 +113,8 @@ def webhook():
     # asyncio.run() is used to execute the async function in this sync context
     asyncio.run(application.process_update(update))
     
-    return 'ok'
+    return 'ok', 200
 
 if __name__ == "__main__":
-    # Add your handlers to the application
-    application.add_handler(CommandHandler("start", start_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-
-    # Run the Flask app
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

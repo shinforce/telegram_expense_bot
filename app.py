@@ -86,14 +86,18 @@ async def set_webhook(application: Application):
     logger.info("Webhook successfully set!")
 
 # --- SETUP APPLICATION ---
-application = Application.builder().token(TELEGRAM_TOKEN).post_init(set_webhook).build()
+application = Application.builder().token(TELEGRAM_TOKEN).build()
 
 # Add your handlers
 application.add_handler(CommandHandler("start", start_handler))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-# Run the initialization before starting the web server
-asyncio.run(application.initialize())
+# --- HELPER FUNCTION TO PROCESS UPDATES ---
+async def handle_update(update_data: dict):
+    """Handles one update from Telegram using the application context manager."""
+    async with application:
+        update = Update.de_json(update_data, application.bot)
+        await application.process_update(update)
 
 # --- FLASK APP ---
 app = Flask(__name__)
@@ -106,15 +110,17 @@ def hello():
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """This endpoint receives updates from Telegram."""
-    # We convert the JSON data from the request into a Telegram Update object
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    
-    # Process the update using the library's built-in handling
-    # asyncio.run() is used to execute the async function in this sync context
-    asyncio.run(application.process_update(update))
-    
+    # We pass the raw JSON data to our new helper function
+    asyncio.run(handle_update(request.get_json(force=True)))
     return 'ok', 200
 
 if __name__ == "__main__":
+    async def setup():
+        """Initializes the bot and sets the webhook."""
+        await application.initialize()
+        await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+
+    asyncio.run(setup())
+    
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

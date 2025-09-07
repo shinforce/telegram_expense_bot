@@ -89,20 +89,23 @@ async def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
     # We use the token as a secret path to make our webhook URL unique and hard to guess.
-    # The url_path is the part of the URL that our server will listen for.
-    # The webhook_url is the full public URL that we tell Telegram to send updates to.
     url_path = f"/{TELEGRAM_TOKEN}"
     full_webhook_url = f"{WEBHOOK_URL}{url_path}"
 
-    # Perform the async setup and start the webhook
+    # Initialize the application and its components before using them
+    await application.initialize()
+
+    # Set the webhook
+    await application.bot.set_webhook(url=full_webhook_url)
+
+    # Start the internal HTTP server to listen for updates
     await application.updater.start_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path=url_path,
-        webhook_url=full_webhook_url
     )
-    
-    # This is new and important: start the application *after* the webhook server is running
+
+    # Start the bot's update processing
     await application.start()
 
     # Keep the script running

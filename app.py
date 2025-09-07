@@ -20,7 +20,7 @@ CURRENCIES = {
     "EUR": "EUR", 
     "EURO": "EUR", 
     "ЕВРО": "EUR",
-    "ЕВР": "EUR"
+    "ЕВР": "EUR",
 
     #RUB
     "RUB": "RUB", 
@@ -68,7 +68,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Received message from {user.first_name}: {text}")
     
-    text = UPPER(text).split('\n')
+    text = text.upper().split('\n')
     
     for text in text:
         currency = "RSD"

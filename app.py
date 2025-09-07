@@ -3,7 +3,7 @@ import gspread
 import logging
 import sys
 from datetime import datetime
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager

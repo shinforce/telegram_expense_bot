@@ -92,24 +92,25 @@ async def main() -> None:
     url_path = f"/{TELEGRAM_TOKEN}"
     full_webhook_url = f"{WEBHOOK_URL}{url_path}"
 
-    # Initialize the application and its components before using them
+    # 1. Initialize the Application
     await application.initialize()
-
-    # Set the webhook
-    await application.bot.set_webhook(url=full_webhook_url)
-
-    # Start the internal HTTP server to listen for updates
+    
+    # 2. Start the webhook server and set the webhook
+    #    This single call handles everything: setting the URL with Telegram
+    #    and starting the local server to listen for updates.
     await application.updater.start_webhook(
         listen="0.0.0.0",
         port=PORT,
         url_path=url_path,
+        webhook_url=full_webhook_url
     )
 
-    # Start the bot's update processing
+    # 3. Start the bot's update processing
     await application.start()
-
-    # Keep the script running
-    logger.info("Bot is running. Press Ctrl+C to stop.")
+    
+    logger.info("Bot is running and webhook is set.")
+    
+    # 4. Keep the script running
     while True:
         await asyncio.sleep(3600)
 

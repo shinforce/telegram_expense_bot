@@ -117,14 +117,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def lifespan(app: FastAPI):
     """Handles startup and shutdown events."""
     # Startup logic
-    application.add_handler(message_handler)
+    # CORRECTED: Create handler objects and then add them
+    start_command_handler = CommandHandler("start", start_handler)
+    expense_message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
+    application.add_handler(start_command_handler)
+    application.add_handler(expense_message_handler)
+
     webhook_path = f"/{TELEGRAM_TOKEN}"
     full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
     await application.bot.set_webhook(url=full_webhook_url, allowed_updates=Update.ALL_TYPES)
     logger.info("Application started and webhook is set.")
-    
-    yield  # The application runs while the lifespan context is active
-    
+
+    yield  # The application runs
+
     # Shutdown logic
     await application.bot.delete_webhook()
     logger.info("Webhook deleted.")
@@ -146,5 +151,5 @@ async def process_update(token: str, request: Request):
     async with application:
         update = Update.de_json(await request.json(), application.bot)
         await application.process_update(update)
-    
+
     return {"status": "ok"}

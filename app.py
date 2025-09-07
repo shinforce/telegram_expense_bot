@@ -3,7 +3,6 @@ import gspread
 import logging
 import sys
 from datetime import datetime
-from flask import Flask, request
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 import asyncio
@@ -14,6 +13,7 @@ GOOGLE_SHEET_NAME = "Расходы"
 GOOGLE_WORKSHEET_NAME = "expenses_log"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
+PORT = int(os.environ.get('PORT', 8443))
 
 # --- SETUP LOGGING ---
 logging.basicConfig(
@@ -79,48 +79,23 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Hmm, I didn't get that. Please use the format: `Description Amount` (e.g., `Coffee 500`) or `Amount Description` (e.g., `500 Coffee`)"
         )
 
-# --- FUNCTION TO SET WEBHOOK ON STARTUP ---
-async def set_webhook(application: Application):
-    """Sets the webhook URL on bot startup."""
-    await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-    logger.info("Webhook successfully set!")
+# --- MAIN APPLICATION LOGIC ---
+async def main() -> None:
+    """Run the bot."""
+    # Create the Application and pass it your bot's token.
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# --- SETUP APPLICATION ---
-application = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Add command and message handlers
+    application.add_handler(CommandHandler("start", start_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
 
-# Add your handlers
-application.add_handler(CommandHandler("start", start_handler))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
-
-# --- HELPER FUNCTION TO PROCESS UPDATES ---
-async def handle_update(update_data: dict):
-    """Handles one update from Telegram using the application context manager."""
-    async with application:
-        update = Update.de_json(update_data, application.bot)
-        await application.process_update(update)
-
-# --- FLASK APP ---
-app = Flask(__name__)
-
-@app.route('/')
-def hello():
-    """A simple endpoint to check if the app is running."""
-    return "Hello, the bot is alive!"
-    
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    """This endpoint receives updates from Telegram."""
-    # We pass the raw JSON data to our new helper function
-    asyncio.run(handle_update(request.get_json(force=True)))
-    return 'ok', 200
+    # Run the bot with a webhook
+    await application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="",  # We will set the full URL path with Telegram
+        webhook_url=f"{WEBHOOK_URL}"
+    )
 
 if __name__ == "__main__":
-    async def setup():
-        """Initializes the bot and sets the webhook."""
-        await application.initialize()
-        await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-
-    asyncio.run(setup())
-    
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    asyncio.run(main())

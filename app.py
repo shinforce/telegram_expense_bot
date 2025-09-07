@@ -53,31 +53,35 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Received message from {user.first_name}: {text}")
     
-    try:
-        parts = text.strip().split()
-        if parts[0].isnumeric():
-            amount = int(parts[0])
-            description = " ".join(parts[1:])
-        else: 
-            amount = int(parts[-1])
-            description = " ".join(parts[:-1])
-        
-        user_name = user.full_name
-        
-        if not description:
-            await update.message.reply_text("Please provide a description before the amount.")
-            return
-
-        if add_expense_to_sheet(description, amount, user_name):
-            await update.message.reply_text(f"✅ Logged: '{description}' for {amount} RSD (from {user.first_name}).")
-        else:
-            await update.message.reply_text("❌ Failed to log expense. Check the server logs.")
+    text = text.split('\n')
+    
+    for text in text:
+    
+        try:
+            parts = text.strip().split()
+            if parts[0].isnumeric():
+                amount = int(parts[0])
+                description = " ".join(parts[1:])
+            else: 
+                amount = int(parts[-1])
+                description = " ".join(parts[:-1])
             
-    except (ValueError, IndexError):
-        logger.warning(f"Could not parse message: {text}")
-        await update.message.reply_text(
-            "Hmm, I didn't get that. Please use the format: `Description Amount` (e.g., `Coffee 500`) or `Amount Description` (e.g., `500 Coffee`)"
-        )
+            user_name = user.full_name
+            
+            if not description:
+                await update.message.reply_text("Please provide a description before the amount.")
+                return
+
+            if add_expense_to_sheet(description, amount, user_name):
+                await update.message.reply_text(f"✅ Logged: '{description}' for {amount} RSD (from {user.first_name}).")
+            else:
+                await update.message.reply_text("❌ Failed to log expense. Check the server logs.")
+                
+        except (ValueError, IndexError):
+            logger.warning(f"Could not parse message: {text}")
+            await update.message.reply_text(
+                "Hmm, I didn't get that. Please use the format: `Description Amount` (e.g., `Coffee 500`) or `Amount Description` (e.g., `500 Coffee`)"
+            )
 
 # --- MAIN APPLICATION LOGIC ---
 async def main() -> None:

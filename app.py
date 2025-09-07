@@ -78,7 +78,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 amount = int(parts[0])
                 if parts[1] in CURRENCIES.keys():
                     currency = CURRENCIES[parts[1]]
-                    description = " ".join(parts[1:])
+                    description = " ".join(parts[2:])
                 else:
                     description = " ".join(parts[1:])
             else:                

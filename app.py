@@ -178,10 +178,14 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def lifespan(app: FastAPI):
     """Handles startup and shutdown events for the bot."""
     # On startup
+    # RESTORED: Initialize the application
+    await application.initialize()
+    
     start_command_handler = CommandHandler("start", start_handler)
     expense_message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
     application.add_handler(start_command_handler)
     application.add_handler(expense_message_handler)
+    
     webhook_path = f"/{TELEGRAM_TOKEN}"
     full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
     await application.bot.set_webhook(url=full_webhook_url, allowed_updates=Update.ALL_TYPES)
@@ -191,7 +195,7 @@ async def lifespan(app: FastAPI):
     
     # On shutdown
     logger.info("Application shutting down...")
-    # CORRECTED ORDER: Delete the webhook *before* shutting down the application
+    # RESTORED: Shut down the application
     await application.bot.delete_webhook()
     await application.shutdown()
     logger.info("Webhook deleted and application shut down.")
@@ -207,7 +211,9 @@ def health_check():
 async def process_update(token: str, request: Request):
     if token != TELEGRAM_TOKEN:
         return {"status": "invalid token"}
+    
     update = Update.de_json(await request.json(), application.bot)
     await application.process_update(update)
+    
     return {"status": "ok"}
 

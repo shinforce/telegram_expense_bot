@@ -165,7 +165,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if add_expense_to_sheet(description, rsd_amount, user_name):
                 reply_text = f"✅ Logged: '{description}' for {rsd_amount} RSD{conversion_message} from {user.first_name}."
-                sent_message = await update.message.reply_text(reply_text)
                 await reply_and_schedule_delete(update, context, reply_text)
             else:
                 await reply_and_schedule_delete(update, context, "❌ Failed to log expense. Check the server logs.")
@@ -177,41 +176,41 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- LIFESPAN EVENT HANDLER ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handles startup and shutdown events."""
-    # Startup logic
-    # CORRECTED: Create handler objects and then add them
+    """Handles startup and shutdown events for the bot."""
+    # On startup
+    await application.initialize()
     start_command_handler = CommandHandler("start", start_handler)
     expense_message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
     application.add_handler(start_command_handler)
     application.add_handler(expense_message_handler)
-
     webhook_path = f"/{TELEGRAM_TOKEN}"
     full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
     await application.bot.set_webhook(url=full_webhook_url, allowed_updates=Update.ALL_TYPES)
-    logger.info("Application started and webhook is set.")
-
+    logger.info("Application started, webhook is set.")
+    
     yield  # The application runs
-
-    # Shutdown logic
+    
+    # On shutdown
+    await application.shutdown()
     await application.bot.delete_webhook()
-    logger.info("Webhook deleted.")
+    logger.info("Webhook deleted, application shut down.")
 
 # --- SETUP WEB SERVER using FastAPI ---
 app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 def health_check():
-    """This endpoint is for Render's health checks."""
     return {"status": "ok"}
 
+# --- UPDATED: WEBHOOK ENDPOINT ---
 @app.post("/{token}")
 async def process_update(token: str, request: Request):
     """This endpoint receives updates from Telegram."""
     if token != TELEGRAM_TOKEN:
         return {"status": "invalid token"}
-
-    async with application:
-        update = Update.de_json(await request.json(), application.bot)
-        await application.process_update(update)
-
+    
+    # We no longer use `async with application` here
+    update = Update.de_json(await request.json(), application.bot)
+    await application.process_update(update)
+    
     return {"status": "ok"}

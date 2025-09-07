@@ -7,6 +7,8 @@ from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
+import httpx
+from math import ceil
 
 # --- CONFIGURATION (READS FROM ENVIRONMENT) ---
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GCP_CREDENTIALS_PATH", "family-expense-bot-471309-a2c7653d9602.json")
@@ -14,7 +16,7 @@ GOOGLE_SHEET_NAME = "Расходы"
 GOOGLE_WORKSHEET_NAME = "expenses_log"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-PORT = int(os.environ.get('PORT', 8443))
+OER_APP_ID = os.environ.get("OER_APP_ID")
 
 CURRENCIES = {
     #EURO
@@ -46,12 +48,38 @@ logger = logging.getLogger(__name__)
 # Create the Application instance once
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
+# --- CURRENCY CONVERSION FUNCTION ---
+async def convert_currency(amount: float, from_currency: str, to_currency: str = "RSD") -> float | None:
+    """Converts an amount from one currency to another using the Open Exchange Rates API."""
+    if from_currency == to_currency:
+        return amount
+
+    api_url = f"https://openexchangerates.org/api/latest.json?app_id={OER_APP_ID}"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(api_url)
+            response.raise_for_status()  # Raises an exception for bad responses (4xx or 5xx)
+            data = response.json()
+            rates = data["rates"]
+
+        # Convert from the source currency to the base currency (USD)
+        amount_in_usd = amount / rates[from_currency]
+        
+        # Convert from the base currency (USD) to the target currency
+        converted_amount = amount_in_usd * rates[to_currency]
+        
+        return converted_amount
+    except Exception as e:
+        logger.error(f"Currency conversion failed: {e}")
+        return None
+
 # --- GOOGLE SHEETS FUNCTION ---
-def add_expense_to_sheet(description: str, amount: float, user_name: str, currency: str = "RSD"):
+def add_expense_to_sheet(description: str, amount: float, user_name: str):
     """Adds a new row to the Google Sheet."""
     try:
         gc = gspread.service_account(filename=GOOGLE_SHEETS_CREDENTIALS)
-        sh = gc.open(GOOGLE_SHEET_NAME).worksheet('expenses_log')  # Assumes you're using the first sheet
+        sh = gc.open(GOOGLE_SHEET_NAME).worksheet('expenses_log')  
         now = datetime.now().strftime("%Y-%m-%d") # %H:%M:%S")
         row_to_add = [now, description, amount, user_name]
         sh.append_row(row_to_add)
@@ -77,6 +105,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for text in text:
         currency = "RSD"
+        conversion_message = ''
         try:
             parts = text.strip().split()
             if parts[0].isnumeric():
@@ -101,8 +130,17 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Please provide a description before the amount.")
                 return
 
-            if add_expense_to_sheet(description, amount, user_name, currency):
-                await update.message.reply_text(f"✅ Logged: '{description}' for {amount} {currency} (from {user.first_name}).")
+            rsd_amount = await ceil(convert_currency(amount, currency, "RSD"))
+            
+            if rsd_amount is None:
+                await update.message.reply_text(f"❌ Could not convert {original_currency} to RSD. Expense not logged.")
+                continue
+
+            if currency != 'RSD':
+                conversion_message = f' (converted {amount} {currency})'
+
+            if add_expense_to_sheet(description, rsd_amount, user_name):
+                await update.message.reply_text(f"✅ Logged: '{description}' for {rsd_amount} RSD{conversion_message} from {user.first_name}.")
             else:
                 await update.message.reply_text("❌ Failed to log expense. Check the server logs.")
                 

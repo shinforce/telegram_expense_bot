@@ -6,6 +6,7 @@ from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
 from fastapi import FastAPI, Request
+from contextlib import asynccontextmanager
 
 # --- CONFIGURATION (READS FROM ENVIRONMENT) ---
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GCP_CREDENTIALS_PATH", "family-expense-bot-471309-a2c7653d9602.json")

@@ -69,7 +69,7 @@ async def convert_currency(amount: float, from_currency: str, to_currency: str =
         # Convert from the base currency (USD) to the target currency
         converted_amount = amount_in_usd * rates[to_currency]
         
-        return converted_amount
+        return ceil(converted_amount)
     except Exception as e:
         logger.error(f"Currency conversion failed: {e}")
         return None
@@ -130,7 +130,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Please provide a description before the amount.")
                 return
 
-            rsd_amount = await ceil(convert_currency(amount, currency, "RSD"))
+            rsd_amount = await convert_currency(amount, currency, "RSD")
             
             if rsd_amount is None:
                 await update.message.reply_text(f"❌ Could not convert {original_currency} to RSD. Expense not logged.")

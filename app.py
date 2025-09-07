@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 import httpx
 from math import ceil
+import asyncio
 
 # --- CONFIGURATION (READS FROM ENVIRONMENT) ---
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get("GCP_CREDENTIALS_PATH", "family-expense-bot-471309-a2c7653d9602.json")
@@ -17,6 +18,7 @@ GOOGLE_WORKSHEET_NAME = "expenses_log"
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 OER_APP_ID = os.environ.get("OER_APP_ID")
+DELETE_MESSAGE_DELAY = 60 
 
 CURRENCIES = {
     #EURO
@@ -32,6 +34,28 @@ CURRENCIES = {
     "РУБЛ": "RUB", 
     "РУБЛЕЙ": "RUB"
 }
+
+# --- DELAYED DELETION FUNCTION ---
+async def delete_message_after_delay(bot: Bot, chat_id: int, message_id: int, delay: int):
+    """Waits for a delay and then deletes a specific message."""
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info(f"Deleted confirmation message {message_id} from chat {chat_id}.")
+    except Exception as e:
+        logger.warning(f"Could not delete message {message_id}: {e}")
+
+async def reply_and_schedule_delete(update: Update, context, text: str):
+    """Sends a reply and immediately schedules it for deletion."""
+    sent_message = await update.message.reply_text(text)
+    asyncio.create_task(
+        delete_message_after_delay(
+            bot=context.bot,
+            chat_id=sent_message.chat_id,
+            message_id=sent_message.message_id,
+            delay=DELETE_MESSAGE_DELAY
+        )
+    )
 
 # --- SETUP LOGGING ---
 logging.basicConfig(
@@ -127,28 +151,28 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_name = user.full_name
             
             if not description:
-                await update.message.reply_text("Please provide a description before the amount.")
+                await reply_and_schedule_delete(update, context, "Please provide a description before the amount.")
                 return
 
             rsd_amount = await convert_currency(amount, currency, "RSD")
             
             if rsd_amount is None:
-                await update.message.reply_text(f"❌ Could not convert {original_currency} to RSD. Expense not logged.")
+                await reply_and_schedule_delete(update, context, f"❌ Could not convert {original_currency} to RSD. Expense not logged.")
                 continue
 
             if currency != 'RSD':
                 conversion_message = f' (converted {amount} {currency})'
 
             if add_expense_to_sheet(description, rsd_amount, user_name):
-                await update.message.reply_text(f"✅ Logged: '{description}' for {rsd_amount} RSD{conversion_message} from {user.first_name}.")
+                reply_text = f"✅ Logged: '{description}' for {rsd_amount} RSD{conversion_message} from {user.first_name}."
+                sent_message = await update.message.reply_text(reply_text)
+                await reply_and_schedule_delete(update, context, reply_text)
             else:
-                await update.message.reply_text("❌ Failed to log expense. Check the server logs.")
+                await reply_and_schedule_delete(update, context, "❌ Failed to log expense. Check the server logs.")
                 
         except (ValueError, IndexError):
             logger.warning(f"Could not parse message: {text}")
-            await update.message.reply_text(
-                "Hmm, I didn't get that. Please use the format: `Description Amount` (e.g., `Coffee 500`) or `Amount Description` (e.g., `500 Coffee`)"
-            )
+            await reply_and_schedule_delete(update, context, "Hmm, I didn't get that. Please use the format: `Description Amount` (e.g., `Coffee 500`) or `Amount Description` (e.g., `500 Coffee`)")
 
 # --- LIFESPAN EVENT HANDLER ---
 @asynccontextmanager

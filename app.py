@@ -41,6 +41,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# --- SETUP BOT APPLICATION ---
+# Create the Application instance once
+application = Application.builder().token(TELEGRAM_TOKEN).build()
+
 # --- GOOGLE SHEETS FUNCTION ---
 def add_expense_to_sheet(description: str, amount: float, user_name: str, currency: str = "RSD"):
     """Adds a new row to the Google Sheet."""
@@ -107,23 +111,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Hmm, I didn't get that. Please use the format: `Description Amount` (e.g., `Coffee 500`) or `Amount Description` (e.g., `500 Coffee`)"
             )
 
-# --- SETUP WEB SERVER using FastAPI ---
-app = FastAPI()
-
-@app.on_event("startup")
-async def startup_event():
-    """On startup, set the webhook."""
+# --- LIFESPAN EVENT HANDLER ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handles startup and shutdown events."""
+    # Startup logic
     application.add_handler(message_handler)
     webhook_path = f"/{TELEGRAM_TOKEN}"
     full_webhook_url = f"{WEBHOOK_URL}{webhook_path}"
     await application.bot.set_webhook(url=full_webhook_url, allowed_updates=Update.ALL_TYPES)
     logger.info("Application started and webhook is set.")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """On shutdown, remove the webhook."""
+    
+    yield  # The application runs while the lifespan context is active
+    
+    # Shutdown logic
     await application.bot.delete_webhook()
     logger.info("Webhook deleted.")
+
+# --- SETUP WEB SERVER using FastAPI ---
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/")
 def health_check():

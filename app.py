@@ -4,7 +4,8 @@ import logging
 import sys
 from datetime import datetime
 from telegram import Update, Bot
-from telegram.ext import Application, MessageHandler, CommandHandler, filters, ExtBot
+from telegram.request import HTTPXRequest
+from telegram.ext import Application, MessageHandler, CommandHandler, filters
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 import httpx
@@ -69,11 +70,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- SETUP BOT APPLICATION ---
-request = ExtBot.DEFAULT_REQUEST.copy()
-request.connect_timeout = 10.0
-request.read_timeout = 10.0
-
-application = Application.builder().token(TELEGRAM_TOKEN).request(request).build()
+httpx_request = HTTPXRequest(
+    connect_timeout=10.0,
+    read_timeout=10.0,
+    pool_timeout=10.0
+)
+application = Application.builder().token(TELEGRAM_TOKEN).request(httpx_request).build()
 
 # --- CURRENCY CONVERSION FUNCTION ---
 async def convert_currency(amount: float, from_currency: str, to_currency: str = "RSD") -> float | None:
@@ -215,6 +217,7 @@ async def process_update(token: str, request: Request):
     await application.process_update(update)
     
     return {"status": "ok"}
+
 
 
 

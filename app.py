@@ -4,8 +4,7 @@ import logging
 import sys
 from datetime import datetime
 from telegram import Update, Bot
-from telegram.ext import Application, MessageHandler, CommandHandler, filters, ExtBot
-from telegram.constants import ReadTimeout, WriteTimeout, ConnectTimeout
+from telegram.ext import Application, MessageHandler, CommandHandler, filters, Defaults
 from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 import httpx
@@ -71,16 +70,13 @@ logger = logging.getLogger(__name__)
 
 # --- SETUP BOT APPLICATION ---
 # Create the Application instance once
-con_pool_size = 8
-request = ExtBot.DEFAULT_REQUEST.copy()
-request.read_timeout = ReadTimeout.DEFAULT_TIMEOUT
-request.write_timeout = WriteTimeout.DEFAULT_TIMEOUT
-# This timeout is what's causing the error
-request.connect_timeout = ConnectTimeout.DEFAULT_TIMEOUT
-# This enables 3 retries on connection timeouts
-request.pool_timeout = 10.0
+defaults = Defaults(
+    connect_timeout=10, # Seconds to wait for a connection to be established
+    read_timeout=10,    # Seconds to wait for a response after a request is sent
+    pool_timeout=10     # Seconds to wait for a connection from the pool
+)
 
-application = Application.builder().token(TELEGRAM_TOKEN).build()
+application = Application.builder().token(TELEGRAM_TOKEN).defaults(defaults).build()
 
 # --- CURRENCY CONVERSION FUNCTION ---
 async def convert_currency(amount: float, from_currency: str, to_currency: str = "RSD") -> float | None:
@@ -222,5 +218,6 @@ async def process_update(token: str, request: Request):
     await application.process_update(update)
     
     return {"status": "ok"}
+
 
 

@@ -6,7 +6,7 @@ from datetime import datetime
 from telegram import Update, Bot
 from telegram.ext import Application, MessageHandler, CommandHandler, filters, ExtBot
 from telegram.constants import ReadTimeout, WriteTimeout, ConnectTimeout
-from fastapiimport FastAPI, Request
+from fastapi import FastAPI, Request
 from contextlib import asynccontextmanager
 import httpx
 from math import ceil
@@ -222,4 +222,5 @@ async def process_update(token: str, request: Request):
     await application.process_update(update)
     
     return {"status": "ok"}
+
 

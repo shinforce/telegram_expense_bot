@@ -14,6 +14,9 @@ from contextlib import asynccontextmanager
 import httpx
 from math import ceil
 import asyncio
+from openai import OpenAI
+from pydantic import BaseModel, Field
+from enum import Enum
 
 # --- CONFIGURATION ---
 class Config:
@@ -26,6 +29,12 @@ class Config:
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
     OER_APP_ID = os.environ.get("OER_APP_ID")
     DELETE_MESSAGE_DELAY = 60
+    
+    # OpenAI Configuration
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+    OPENAI_MODEL = "gpt-4o-mini"
+    AI_TEMPERATURE = 0.1  # Low temperature for consistent categorization
+    AI_CONFIDENCE_THRESHOLD = 0.6
     
     # Validation limits
     MIN_AMOUNT = 0.01
@@ -92,6 +101,25 @@ class ParseResult:
     expense: Optional[Expense] = None
     error_message: str = ""
 
+@dataclass
+class CategoryInfo:
+    """Represents a category with its description"""
+    name: str
+    description: str
+    
+    def to_dict(self) -> Dict[str, str]:
+        return {
+            "name": self.name,
+            "description": self.description
+        }
+
+@dataclass
+class CategoryResult:
+    """Result of AI categorization"""
+    category: str
+    confidence: float
+    reasoning: str
+
 # --- EXPENSE PARSER ---
 class ExpenseParser:
     """Handles parsing of expense messages with multiple formats"""
@@ -120,7 +148,7 @@ class ExpenseParser:
             except ValueError:
                 pass
         
-        # Check if amount is at the end with currency
+        # Check if amount is in the middle with currency
         middle_match = re.match(r'^(.*?)\s+' + amount_pattern + r'\s+(.*)$', text)
         if middle_match:
             amount_str = middle_match.group(2).replace(',', '.')
@@ -273,6 +301,171 @@ class CurrencyConverter:
             logger.error(f"Conversion calculation failed: {e}")
             return None
 
+# --- CATEGORY SHEET MANAGER ---
+class CategorySheetManager:
+    """Manages reading categories from Google Sheets"""
+    
+    def __init__(self, credentials_file: str, sheet_name: str):
+        self.credentials_file = credentials_file
+        self.sheet_name = sheet_name
+        self._categories_cache = None
+        self._cache_timestamp = None
+        self.cache_duration = 3600  # 1 hour cache
+    
+    def fetch_categories(self) -> List[CategoryInfo]:
+        """Fetch categories from Google Sheets 'categories' worksheet"""
+        try:
+            # Check cache first
+            if self._categories_cache and self._cache_timestamp:
+                time_diff = (datetime.now() - self._cache_timestamp).total_seconds()
+                if time_diff < self.cache_duration:
+                    logger.info("Using cached categories")
+                    return self._categories_cache
+            
+            # Get the worksheet
+            gc = gspread.service_account(filename=self.credentials_file)
+            sh = gc.open(self.sheet_name)
+            categories_worksheet = sh.worksheet('categories')
+            
+            # Get all records as dictionaries
+            records = categories_worksheet.get_all_records()
+            
+            # Convert to CategoryInfo objects
+            categories = []
+            for record in records:
+                if record.get('category_name') and record.get('description_for_prompt'):
+                    categories.append(
+                        CategoryInfo(
+                            name=record['category_name'],
+                            description=record['description_for_prompt']
+                        )
+                    )
+            
+            # Update cache
+            self._categories_cache = categories
+            self._cache_timestamp = datetime.now()
+            
+            logger.info(f"Fetched {len(categories)} categories from sheet")
+            return categories
+            
+        except Exception as e:
+            logger.error(f"Error fetching categories from sheet: {e}")
+            # Return cached data if available
+            if self._categories_cache:
+                logger.warning("Using expired cache due to fetch error")
+                return self._categories_cache
+            return []
+
+# --- AI CATEGORY DETERMINER ---
+class AICategoryDeterminer:
+    """Handles AI-based category determination using OpenAI"""
+    
+    def __init__(self, api_key: str, category_sheet_manager: CategorySheetManager):
+        self.client = OpenAI(api_key=api_key) if api_key else None
+        self.category_sheet_manager = category_sheet_manager
+        self._category_enum = None
+        self._category_model = None
+        self.enabled = bool(api_key)
+        
+        if not self.enabled:
+            logger.warning("OpenAI API key not found. AI categorization disabled.")
+    
+    def _create_category_enum(self, categories: List[CategoryInfo]):
+        """Dynamically create an Enum from categories"""
+        # Create enum members from category names
+        enum_dict = {cat.name.upper().replace(' ', '_'): cat.name for cat in categories}
+        return Enum('CategoryEnum', enum_dict)
+    
+    def _create_pydantic_model(self, categories: List[CategoryInfo]):
+        """Create a Pydantic model with the category enum for structured output"""
+        # Create the enum
+        category_enum = self._create_category_enum(categories)
+        
+        # Create Pydantic model dynamically
+        class ExpenseCategory(BaseModel):
+            category: category_enum = Field(description="The category that best matches the expense")
+            confidence: float = Field(description="Confidence level from 0 to 1", ge=0, le=1)
+            reasoning: str = Field(description="Brief explanation for the category choice")
+        
+        return ExpenseCategory, category_enum
+    
+    def _build_system_prompt(self, categories: List[CategoryInfo]) -> str:
+        """Build the system prompt with category descriptions"""
+        categories_text = "\n".join([
+            f"- {cat.name}: {cat.description}"
+            for cat in categories
+        ])
+        
+        return f"""You are an expense categorization assistant. Your task is to categorize expenses based on their description and the user who made them.
+
+Available categories and their descriptions:
+{categories_text}
+
+Instructions:
+1. Analyze the expense description carefully
+2. Consider the user's name when relevant (some categories may be person-specific)
+3. Choose the most appropriate category from the list above
+4. Provide a confidence score (0-1) based on how well the expense matches the category
+5. Give a brief reasoning for your choice
+
+Be consistent and logical in your categorization."""
+    
+    async def determine_category(self, 
+                                description: str, 
+                                user_name: str,
+                                amount: Optional[float] = None) -> CategoryResult:
+        """
+        Determine category for an expense using AI
+        
+        Returns:
+            CategoryResult with category_name, confidence, and reasoning
+        """
+        if not self.enabled:
+            return CategoryResult("UNCATEGORIZED", 0.0, "AI categorization not enabled")
+        
+        try:
+            # Fetch current categories
+            categories = self.category_sheet_manager.fetch_categories()
+            if not categories:
+                logger.error("No categories available")
+                return CategoryResult("OTHER", 0.0, "No categories configured")
+            
+            # Create or update Pydantic model if needed
+            if not self._category_model or len(categories) != len(self._category_enum.__members__):
+                self._category_model, self._category_enum = self._create_pydantic_model(categories)
+                logger.info(f"Created category model with {len(categories)} categories")
+            
+            # Build the user prompt
+            user_prompt = f"""Categorize this expense:
+Description: {description}
+User: {user_name}
+Amount: {amount if amount else 'Not specified'}"""
+            
+            # Make the API call with structured output
+            completion = self.client.beta.chat.completions.parse(
+                model=Config.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": self._build_system_prompt(categories)},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format=self._category_model,
+                temperature=Config.AI_TEMPERATURE
+            )
+            
+            # Parse the response
+            result = completion.choices[0].message.parsed
+            
+            # Get the actual category name from the enum value
+            category_name = result.category.value if hasattr(result.category, 'value') else str(result.category)
+            
+            logger.info(f"Categorized '{description}' as '{category_name}' with confidence {result.confidence}")
+            
+            return CategoryResult(category_name, result.confidence, result.reasoning)
+            
+        except Exception as e:
+            logger.error(f"Error in AI categorization: {e}")
+            return CategoryResult("ERROR", 0.0, f"AI categorization failed: {str(e)}")
+
 # --- GOOGLE SHEETS MANAGER ---
 class GoogleSheetsManager:
     """Manages Google Sheets operations"""
@@ -296,8 +489,9 @@ class GoogleSheetsManager:
             self._worksheet = None  # Reset on error
             return None
     
-    def add_expense(self, expense: Expense, amount_rsd: float) -> bool:
-        """Add expense to Google Sheet"""
+    def add_expense(self, expense: Expense, amount_rsd: float, 
+                   category: Optional[str] = None, confidence: Optional[float] = None) -> bool:
+        """Add expense to Google Sheet with optional category information"""
         try:
             worksheet = self._get_worksheet()
             if worksheet is None:
@@ -308,10 +502,15 @@ class GoogleSheetsManager:
                 now,
                 expense.description,
                 amount_rsd,
-                expense.user_name#,
-                #expense.currency,  # Original currency
-                #expense.amount     # Original amount
+                expense.user_name
             ]
+            
+            # Add category info if AI categorization is enabled
+            if category is not None:
+                row.extend([
+                    category,
+                    confidence if confidence is not None else 0.0
+                ])
             
             worksheet.append_row(row)
             logger.info(f"Added to sheet: {row}")
@@ -367,6 +566,22 @@ class ExpenseBotHandler:
             Config.GOOGLE_WORKSHEET_NAME
         )
         self.message_manager = MessageManager(Config.DELETE_MESSAGE_DELAY)
+        
+        # Initialize AI categorization services if API key is available
+        self.ai_enabled = bool(Config.OPENAI_API_KEY)
+        if self.ai_enabled:
+            self.category_sheet_manager = CategorySheetManager(
+                Config.GOOGLE_SHEETS_CREDENTIALS,
+                Config.GOOGLE_SHEET_NAME
+            )
+            self.ai_categorizer = AICategoryDeterminer(
+                Config.OPENAI_API_KEY,
+                self.category_sheet_manager
+            )
+        else:
+            self.category_sheet_manager = None
+            self.ai_categorizer = None
+            logger.info("AI categorization disabled - no OpenAI API key")
     
     async def handle_start_command(self, update: Update, context):
         """Handle /start command"""
@@ -379,6 +594,10 @@ class ExpenseBotHandler:
             "• `Taxi 1200 RSD`\n\n"
             "You can send multiple expenses at once (one per line)."
         )
+        
+        if self.ai_enabled:
+            welcome_message += "\n\n🤖 AI categorization is enabled!"
+        
         await update.message.reply_text(welcome_message, parse_mode='Markdown')
     
     async def handle_message(self, update: Update, context):
@@ -412,6 +631,15 @@ class ExpenseBotHandler:
             expense.user_name = user.full_name
             expense.user_id = user.id
             
+            # Determine category using AI if enabled
+            category_result = None
+            if self.ai_enabled:
+                category_result = await self.ai_categorizer.determine_category(
+                    description=expense.description,
+                    user_name=expense.user_name,
+                    amount=expense.amount
+                )
+            
             # Convert currency if needed
             conversion_note = ""
             if expense.currency != Config.DEFAULT_CURRENCY:
@@ -431,16 +659,36 @@ class ExpenseBotHandler:
             else:
                 rsd_amount = expense.amount
             
-            # Add to Google Sheets
-            if self.sheets_manager.add_expense(expense, rsd_amount):
+            # Add to Google Sheets with category if available
+            if category_result:
+                success = self.sheets_manager.add_expense(
+                    expense, rsd_amount, 
+                    category_result.category, 
+                    category_result.confidence
+                )
+            else:
+                success = self.sheets_manager.add_expense(expense, rsd_amount)
+            
+            if success:
                 success_count += 1
                 
-                # Send success message
+                # Build success message
                 success_msg = (
                     f"✅ Logged: *{expense.description}*\n"
                     f"Amount: {rsd_amount} RSD{conversion_note}\n"
-                    f"By: {user.first_name}"
                 )
+                
+                # Add category info if available
+                if category_result:
+                    category_emoji = "🤖" if category_result.confidence > 0.7 else "🤔"
+                    success_msg += f"Category: {category_emoji} {category_result.category} ({category_result.confidence:.0%})\n"
+                    
+                    # Add reasoning if confidence is low
+                    if category_result.confidence < Config.AI_CONFIDENCE_THRESHOLD:
+                        success_msg += f"💭 {category_result.reasoning}\n"
+                
+                success_msg += f"By: {user.first_name}"
+                
                 await self.message_manager.send_temp_message(
                     update, context, success_msg, parse_mode='Markdown'
                 )
@@ -516,5 +764,3 @@ async def process_update(token: str, request: Request):
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}
-
-

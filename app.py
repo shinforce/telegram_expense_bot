@@ -120,6 +120,15 @@ class ExpenseParser:
             except ValueError:
                 pass
         
+        # Check if amount is at the end with currency
+        middle_match = re.match(r'^(.*?)\s+' + amount_pattern + r'\s+(.*)$', text)
+        if middle_match:
+            amount_str = middle_match.group(2).replace(',', '.')
+            try:
+                return float(amount_str), f"{middle_match.group(1)} {middle_match.group(3)}"
+            except ValueError:
+                pass
+        
         return None, text
     
     @classmethod
@@ -507,4 +516,5 @@ async def process_update(token: str, request: Request):
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}
+
 

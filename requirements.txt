@@ -3,3 +3,6 @@ python-telegram-bot[webhooks]~=21.0
 oauth2client
 fastapi
 uvicorn
+httpx
+openai
+pydantic

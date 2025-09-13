@@ -96,19 +96,50 @@ class ParseResult:
 class ExpenseParser:
     """Handles parsing of expense messages with multiple formats"""
     
-    # Regex patterns for different expense formats
-    PATTERNS = [
-        # Format: "100.50 EUR Coffee with friends"
-        (r'^(\d+(?:[.,]\d+)?)\s+([A-Z€$₽]{1,6})\s+(.+)$', ['amount', 'currency', 'description']),
-        # Format: "100.50 Coffee with friends EUR"
-        (r'^(\d+(?:[.,]\d+)?)\s+(.+?)\s+([A-Z€$₽]{1,6})$', ['amount', 'description', 'currency']),
-        # Format: "Coffee with friends 100.50 EUR"
-        (r'^(.+?)\s+(\d+(?:[.,]\d+)?)\s+([A-Z€$₽]{1,6})$', ['description', 'amount', 'currency']),
-        # Format: "100.50 Coffee" (no currency)
-        (r'^(\d+(?:[.,]\d+)?)\s+(.+)$', ['amount', 'description']),
-        # Format: "Coffee 100.50" (no currency)
-        (r'^(.+?)\s+(\d+(?:[.,]\d+)?)$', ['description', 'amount']),
-    ]
+    @classmethod
+    def _extract_amount(cls, text: str) -> Tuple[Optional[float], str]:
+        """Extract amount from text and return (amount, remaining_text)"""
+        # Pattern to find amount at the beginning or end of text
+        amount_pattern = r'(\d+(?:[.,]\d+)?)'
+        
+        # Check if amount is at the beginning
+        start_match = re.match(r'^' + amount_pattern + r'\s+(.*)$', text)
+        if start_match:
+            amount_str = start_match.group(1).replace(',', '.')
+            try:
+                return float(amount_str), start_match.group(2)
+            except ValueError:
+                pass
+        
+        # Check if amount is at the end
+        end_match = re.match(r'^(.*?)\s+' + amount_pattern + r'$', text)
+        if end_match:
+            amount_str = end_match.group(2).replace(',', '.')
+            try:
+                return float(amount_str), end_match.group(1)
+            except ValueError:
+                pass
+        
+        return None, text
+    
+    @classmethod
+    def _extract_currency(cls, text: str) -> Tuple[Optional[str], str]:
+        """Extract currency from text and return (currency_code, remaining_text)"""
+        words = text.split()
+        
+        # Check first word for currency
+        if words and words[0].upper() in Config.CURRENCIES:
+            currency = Config.CURRENCIES[words[0].upper()]
+            remaining = ' '.join(words[1:]) if len(words) > 1 else ''
+            return currency, remaining
+        
+        # Check last word for currency
+        if words and words[-1].upper() in Config.CURRENCIES:
+            currency = Config.CURRENCIES[words[-1].upper()]
+            remaining = ' '.join(words[:-1]) if len(words) > 1 else ''
+            return currency, remaining
+        
+        return None, text
     
     @classmethod
     def parse_line(cls, text: str) -> ParseResult:
@@ -116,53 +147,44 @@ class ExpenseParser:
         if not text or not text.strip():
             return ParseResult(False, error_message="Empty text")
         
-        # Clean and prepare text
-        text = text.strip()
-        original_text = text
-        text_upper = text.upper()
+        original_text = text.strip()
+        working_text = original_text
         
-        # Try each pattern
-        for pattern, field_order in cls.PATTERNS:
-            match = re.match(pattern, text_upper)
-            if match:
-                try:
-                    # Extract values based on field order
-                    values = {}
-                    for i, field in enumerate(field_order):
-                        values[field] = match.group(i + 1)
-                    
-                    # Parse amount (handle both . and , as decimal separator)
-                    amount_str = values.get('amount', '0')
-                    amount_str = amount_str.replace(',', '.')
-                    amount = float(amount_str)
-                    
-                    # Get currency (default to RSD if not specified)
-                    currency_str = values.get('currency', Config.DEFAULT_CURRENCY)
-                    currency = Config.CURRENCIES.get(currency_str, currency_str)
-                    
-                    # Get description
-                    description = values.get('description', '').strip()
-                    
-                    # Create expense object
-                    expense = Expense(
-                        description=description,
-                        amount=amount,
-                        currency=currency,
-                        original_text=original_text
-                    )
-                    
-                    # Validate
-                    is_valid, error_msg = expense.validate()
-                    if not is_valid:
-                        return ParseResult(False, error_message=error_msg)
-                    
-                    return ParseResult(True, expense=expense)
-                    
-                except (ValueError, KeyError) as e:
-                    logger.debug(f"Pattern matched but parsing failed: {e}")
-                    continue
+        # Step 1: Extract amount (required)
+        amount, remaining_after_amount = cls._extract_amount(working_text)
+        if amount is None:
+            return ParseResult(False, error_message="No valid amount found")
         
-        return ParseResult(False, error_message="Could not parse expense format")
+        # Step 2: Try to extract currency from the remaining text
+        currency, description = cls._extract_currency(remaining_after_amount)
+        
+        # If no currency found, use default and entire remaining text as description
+        if currency is None:
+            currency = Config.DEFAULT_CURRENCY
+            description = remaining_after_amount
+        
+        # Clean up description
+        description = description.strip()
+        
+        # If no description, return error
+        if not description:
+            return ParseResult(False, error_message="Description cannot be empty")
+        
+        # Create expense object
+        expense = Expense(
+            description=description,
+            amount=int(amount), #don't need fractions, remove ceil for public version
+            currency=currency,
+            original_text=original_text
+        )
+        
+        # Validate
+        is_valid, error_msg = expense.validate()
+        if not is_valid:
+            return ParseResult(False, error_message=error_msg)
+        
+        logger.debug(f"Parsed: amount={amount}, currency={currency}, desc={description}")
+        return ParseResult(True, expense=expense)
     
     @classmethod
     def parse_message(cls, text: str) -> List[ParseResult]:
@@ -237,7 +259,7 @@ class CurrencyConverter:
             amount_in_usd = amount / rates[from_currency]
             converted_amount = amount_in_usd * rates[to_currency]
             
-            return ceil(converted_amount)
+            return ceil(converted_amount) #don't need fractions, remove ceil for public version
         except Exception as e:
             logger.error(f"Conversion calculation failed: {e}")
             return None
@@ -277,9 +299,9 @@ class GoogleSheetsManager:
                 now,
                 expense.description,
                 amount_rsd,
-                expense.user_name,
-                expense.currency,  # Original currency
-                expense.amount     # Original amount
+                expense.user_name#,
+                #expense.currency,  # Original currency
+                #expense.amount     # Original amount
             ]
             
             worksheet.append_row(row)
@@ -485,3 +507,4 @@ async def process_update(token: str, request: Request):
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}
+

@@ -120,6 +120,16 @@ class CategoryResult:
     confidence: float
     reasoning: str
 
+@dataclass
+class MonthlyStats:
+    """Represents monthly statistics"""
+    total_amount: float
+    expense_count: int
+    top_categories: List[Tuple[str, float]]  # [(category, amount), ...]
+    month_year: str
+    currency: str = "RSD"
+    user_totals: Optional[Dict[str, float]] = None  # Optional user breakdown
+
 # --- EXPENSE PARSER ---
 class ExpenseParser:
     """Handles parsing of expense messages with multiple formats"""
@@ -448,6 +458,111 @@ Amount: {amount if amount else 'Not specified'}"""
             logger.error(f"Error in AI categorization: {e}")
             return CategoryResult("ERROR", 0.0, f"AI categorization failed: {str(e)}")
 
+# --- STATS MANAGER ---
+class StatsManager:
+    """Handles statistics calculation from Google Sheets"""
+    
+    def __init__(self, credentials_file: str, sheet_name: str, worksheet_name: str):
+        self.credentials_file = credentials_file
+        self.sheet_name = sheet_name
+        self.worksheet_name = worksheet_name
+        self._worksheet = None
+    
+    def _get_worksheet(self):
+        """Get or create worksheet connection"""
+        try:
+            if self._worksheet is None:
+                gc = gspread.service_account(filename=self.credentials_file)
+                sh = gc.open(self.sheet_name)
+                self._worksheet = sh.worksheet(self.worksheet_name)
+            return self._worksheet
+        except Exception as e:
+            logger.error(f"Failed to connect to Google Sheets: {e}")
+            self._worksheet = None  # Reset on error
+            return None
+    
+    def get_current_month_stats(self) -> MonthlyStats:
+        """Fetch and calculate statistics for current month"""
+        try:
+            worksheet = self._get_worksheet()
+            if worksheet is None:
+                return MonthlyStats(
+                    total_amount=0,
+                    expense_count=0,
+                    top_categories=[],
+                    month_year=datetime.now().strftime("%Y-%m")
+                )
+            
+            # Get all records
+            records = worksheet.get_all_records()
+            
+            # Filter for current month
+            current_month = datetime.now().strftime("%Y-%m")
+            month_expenses = []
+            
+            for record in records:
+                # Handle different date formats - assuming date is in first column
+                date_str = str(record.get('date', ''))
+                if date_str.startswith(current_month):
+                    month_expenses.append(record)
+            
+            # Calculate statistics
+            return self._calculate_stats(month_expenses, current_month)
+            
+        except Exception as e:
+            logger.error(f"Error getting monthly stats: {e}")
+            return MonthlyStats(
+                total_amount=0,
+                expense_count=0,
+                top_categories=[],
+                month_year=datetime.now().strftime("%Y-%m")
+            )
+    
+    def _calculate_stats(self, expenses: List[Dict], month_str: str) -> MonthlyStats:
+        """Calculate statistics from expense records"""
+        if not expenses:
+            return MonthlyStats(
+                total_amount=0,
+                expense_count=0,
+                top_categories=[],
+                month_year=month_str
+            )
+        
+        # Calculate total
+        total = 0
+        category_totals = {}
+        user_totals = {}
+        
+        for exp in expenses:
+            # Get amount - handle different column names
+            amount = float(exp.get('amount', exp.get('Amount', 0)))
+            total += amount
+            
+            # Aggregate by category if present
+            category = exp.get('category', exp.get('Category', 'UNCATEGORIZED'))
+            if category:
+                category_totals[category] = category_totals.get(category, 0) + amount
+            
+            # Aggregate by user if present
+            user = exp.get('user', exp.get('User', exp.get('user_name', 'Unknown')))
+            if user:
+                user_totals[user] = user_totals.get(user, 0) + amount
+        
+        # Get top 3 categories
+        top_categories = sorted(
+            category_totals.items(), 
+            key=lambda x: x[1], 
+            reverse=True
+        )[:3]
+        
+        return MonthlyStats(
+            total_amount=total,
+            expense_count=len(expenses),
+            top_categories=top_categories,
+            month_year=month_str,
+            user_totals=user_totals
+        )
+
 # --- GOOGLE SHEETS MANAGER ---
 class GoogleSheetsManager:
     """Manages Google Sheets operations"""
@@ -549,6 +664,13 @@ class ExpenseBotHandler:
         )
         self.message_manager = MessageManager(Config.DELETE_MESSAGE_DELAY)
         
+        # Initialize stats manager
+        self.stats_manager = StatsManager(
+            Config.GOOGLE_SHEETS_CREDENTIALS,
+            Config.GOOGLE_SHEET_NAME,
+            Config.GOOGLE_WORKSHEET_NAME
+        )
+        
         # Initialize AI categorization services if API key is available
         self.ai_enabled = bool(Config.OPENAI_API_KEY)
         if self.ai_enabled:
@@ -574,13 +696,78 @@ class ExpenseBotHandler:
             "• `Coffee 500`\n"
             "• `15.50 EUR Lunch`\n"
             "• `Taxi 1200 RSD`\n\n"
-            "You can send multiple expenses at once (one per line)."
+            "You can send multiple expenses at once (one per line).\n\n"
+            "📊 Use `/stats` to see your monthly statistics."
         )
         
         if self.ai_enabled:
             welcome_message += "\n\n🤖 AI categorization is enabled!"
         
         await update.message.reply_text(welcome_message, parse_mode='Markdown')
+    
+    async def handle_stats_command(self, update: Update, context):
+        """Handle /stats command"""
+        try:
+            # Send initial "processing" message
+            processing_msg = await update.message.reply_text("📊 Calculating statistics...")
+            
+            # Get stats
+            stats = self.stats_manager.get_current_month_stats()
+            
+            # Format message
+            message = self._format_stats_message(stats)
+            
+            # Delete processing message
+            await processing_msg.delete()
+            
+            # Send stats message (permanent, not auto-deleted)
+            await update.message.reply_text(message, parse_mode='Markdown')
+            
+        except Exception as e:
+            logger.error(f"Error getting stats: {e}")
+            await update.message.reply_text(
+                "❌ Sorry, couldn't fetch statistics. Please try again later."
+            )
+    
+    def _format_stats_message(self, stats: MonthlyStats) -> str:
+        """Format statistics into a readable message"""
+        # Get month name
+        try:
+            month_date = datetime.strptime(stats.month_year, "%Y-%m")
+            month_name = month_date.strftime("%B %Y")
+        except:
+            month_name = stats.month_year
+        
+        message = f"📊 *Statistics for {month_name}*\n"
+        message += "━━━━━━━━━━━━━━━━━━\n\n"
+        
+        if stats.expense_count == 0:
+            message += "💤 No expenses recorded this month yet.\n"
+            message += "Start tracking by sending expenses!"
+            return message
+        
+        # Total expenses
+        message += f"💰 *Total Expenses:* {stats.total_amount:,.0f} {stats.currency}\n"
+        message += f"📝 *Number of Expenses:* {stats.expense_count}\n"
+        message += f"📈 *Average per Expense:* {stats.total_amount/stats.expense_count:,.0f} {stats.currency}\n\n"
+        
+        # Top categories
+        if stats.top_categories:
+            message += "🏆 *Top Categories:*\n"
+            for i, (category, amount) in enumerate(stats.top_categories, 1):
+                percentage = (amount / stats.total_amount) * 100
+                emoji = ["🥇", "🥈", "🥉"][i-1]
+                message += f"{emoji} {category}: {amount:,.0f} {stats.currency} ({percentage:.1f}%)\n"
+        
+        # User breakdown if available
+        if stats.user_totals and len(stats.user_totals) > 1:
+            message += "\n👥 *By User:*\n"
+            sorted_users = sorted(stats.user_totals.items(), key=lambda x: x[1], reverse=True)
+            for user, amount in sorted_users[:5]:  # Show top 5 users
+                user_percentage = (amount / stats.total_amount) * 100
+                message += f"• {user}: {amount:,.0f} {stats.currency} ({user_percentage:.1f}%)\n"
+        
+        return message
     
     async def handle_message(self, update: Update, context):
         """Process expense messages"""
@@ -622,7 +809,7 @@ class ExpenseBotHandler:
                     amount=expense.amount
                 )
             
-            # Convert currency if needed
+# Convert currency if needed
             conversion_note = ""
             if expense.currency != Config.DEFAULT_CURRENCY:
                 rsd_amount = await self.converter.convert(
@@ -709,6 +896,9 @@ async def lifespan(app: FastAPI):
         CommandHandler("start", bot_handler.handle_start_command)
     )
     application.add_handler(
+        CommandHandler("stats", bot_handler.handle_stats_command)
+    )
+    application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, bot_handler.handle_message)
     )
     
@@ -731,7 +921,7 @@ app = FastAPI(lifespan=lifespan)
 @app.api_route("/", methods=["GET", "HEAD"])
 def health_check():
     """Health check endpoint for monitoring"""
-    return {"status": "ok", "service": "expense-bot"}
+    return {"status": "ok", "service": "expense-bot", "features": ["expenses", "stats"]}
 
 @app.post("/{token}")
 async def process_update(token: str, request: Request):
@@ -747,5 +937,3 @@ async def process_update(token: str, request: Request):
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}
-
-

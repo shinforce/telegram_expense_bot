@@ -497,7 +497,7 @@ class GoogleSheetsManager:
             if worksheet is None:
                 return False
             
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            now = datetime.now().strftime("%Y-%m-%d) #%H:%M:%S")
             row = [
                 now,
                 expense.description,
@@ -508,8 +508,8 @@ class GoogleSheetsManager:
             # Add category info if AI categorization is enabled
             if category is not None:
                 row.extend([
-                    category,
-                    confidence if confidence is not None else 0.0
+                    category#,
+                    #confidence if confidence is not None else 0.0
                 ])
             
             worksheet.append_row(row)
@@ -681,7 +681,8 @@ class ExpenseBotHandler:
                 # Add category info if available
                 if category_result:
                     category_emoji = "🤖" if category_result.confidence > 0.7 else "🤔"
-                    success_msg += f"Category: {category_emoji} {category_result.category} ({category_result.confidence:.0%})\n"
+                    #success_msg += f"Category: {category_emoji} {category_result.category} ({category_result.confidence:.0%})\n"
+                    success_msg += f"Category: {category_result.category}\n"
                     
                     # Add reasoning if confidence is low
                     if category_result.confidence < Config.AI_CONFIDENCE_THRESHOLD:
@@ -764,3 +765,4 @@ async def process_update(token: str, request: Request):
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}
+

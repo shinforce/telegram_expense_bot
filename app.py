@@ -308,21 +308,11 @@ class CategorySheetManager:
     def __init__(self, credentials_file: str, sheet_name: str):
         self.credentials_file = credentials_file
         self.sheet_name = sheet_name
-        self._categories_cache = None
-        self._cache_timestamp = None
-        self.cache_duration = 3600  # 1 hour cache
     
     def fetch_categories(self) -> List[CategoryInfo]:
         """Fetch categories from Google Sheets 'categories' worksheet"""
         try:
-            # Check cache first
-            if self._categories_cache and self._cache_timestamp:
-                time_diff = (datetime.now() - self._cache_timestamp).total_seconds()
-                if time_diff < self.cache_duration:
-                    logger.info("Using cached categories")
-                    return self._categories_cache
-            
-            # Get the worksheet
+            # Get the worksheet - always fetch fresh data
             gc = gspread.service_account(filename=self.credentials_file)
             sh = gc.open(self.sheet_name)
             categories_worksheet = sh.worksheet('categories')
@@ -341,19 +331,11 @@ class CategorySheetManager:
                         )
                     )
             
-            # Update cache
-            self._categories_cache = categories
-            self._cache_timestamp = datetime.now()
-            
             logger.info(f"Fetched {len(categories)} categories from sheet")
             return categories
             
         except Exception as e:
             logger.error(f"Error fetching categories from sheet: {e}")
-            # Return cached data if available
-            if self._categories_cache:
-                logger.warning("Using expired cache due to fetch error")
-                return self._categories_cache
             return []
 
 # --- AI CATEGORY DETERMINER ---
@@ -497,7 +479,7 @@ class GoogleSheetsManager:
             if worksheet is None:
                 return False
             
-            now = datetime.now().strftime("%Y-%m-%d) #%H:%M:%S")
+            now = datetime.now().strftime("%Y-%m-%d") #%H:%M:%S")
             row = [
                 now,
                 expense.description,
@@ -765,4 +747,5 @@ async def process_update(token: str, request: Request):
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"status": "error", "message": str(e)}
+
 
